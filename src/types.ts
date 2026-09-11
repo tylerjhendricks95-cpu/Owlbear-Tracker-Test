@@ -1,14 +1,29 @@
-export interface InitiativeEntry {
+export interface TrackerEntry {
+  id: string; // Token ID
+  name: string;
+  isAuto: boolean;
+  modifier: number;
+  score: number;
+  hp: number;
+  maxHp: number;
+  conditions: string[];
+}
+
+export interface SavedCharacter {
   id: string;
   name: string;
   modifier: number;
-  roll: number;
-  total: number;
+  maxHp: number;
 }
 
-export interface InitiativeMetadata {
-  entries: InitiativeEntry[];
+export interface RoomData {
+  entries: TrackerEntry[];
   activeIndex: number;
+  round: number;
+  inCombat: boolean;
 }
 
-export const METADATA_KEY = "com.tylerjhendricks95-cpu.initiative-tracker/metadata";
+export interface ConditionPreset {
+  name: string;
+  color: string;
+}
