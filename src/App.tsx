@@ -1,121 +1,76 @@
 import React, { useEffect, useState, useRef } from "react";
-import OBR, { Item } from "@owlbear-rodeo/sdk";
-
-export interface TrackerEntry {
-  id: string; // Token ID
-  name: string;
-  isAuto: boolean;
-  modifier: number;
-  score: number;
-  hp: number;
-  maxHp: number;
-  conditions: string[]; // Active status tags
-}
-
-export interface RoomData {
-  entries: TrackerEntry[];
-  activeIndex: number;
-  round: number;
-  inCombat: boolean;
-}
-
-const METADATA_KEY = "com.tylerjhendricks95-cpu.initiative-tracker/metadata";
-const CONTEXT_ICON =
-  "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FFD700'><path d='M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z'/></svg>";
-
-const PRESET_CONDITIONS = [
-  { name: "Blessed", color: "#0288d1" },
-  { name: "Blinded", color: "#546e7a" },
-  { name: "Charmed", color: "#e91e63" },
-  { name: "Concentrating", color: "#f57f17" },
-  { name: "Frightened", color: "#c62828" },
-  { name: "Grappled", color: "#8d6e63" },
-  { name: "Invisible", color: "#00acc1" },
-  { name: "Paralyzed", color: "#b71c1c" },
-  { name: "Poisoned", color: "#2e7d32" },
-  { name: "Prone", color: "#7b1fa2" },
-  { name: "Restrained", color: "#d81b60" },
-  { name: "Stunned", color: "#ed6c02" },
-];
+import OBR from "@owlbear-rodeo/sdk";
+import { TrackerEntry, SavedCharacter } from "./types";
+import { LOCAL_STORAGE_REPO_KEY } from "./constants";
+import { useOwlbearInitiative } from "./hooks/useOwlbearInitiative";
+import { HeaderControls } from "./components/HeaderControls";
+import { CharacterLibrary } from "./components/CharacterLibrary";
+import { TrackerEntryCard } from "./components/TrackerEntryCard";
 
 export default function App() {
-  const [isReady, setIsReady] = useState(false);
-  const [entries, setEntries] = useState<TrackerEntry[]>([]);
-  const [activeIndex, setActiveIndex] = useState<number>(0);
-  const [round, setRound] = useState<number>(1);
-  const [inCombat, setInCombat] = useState<boolean>(false);
+  const {
+    isReady,
+    entries,
+    activeIndex,
+    round,
+    inCombat,
+    saveRoomState,
+    handleAddSelected,
+  } = useOwlbearInitiative();
+
+  const [repository, setRepository] = useState<SavedCharacter[]>([]);
+  const [showRepo, setShowRepo] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const entryRefs = useRef<(HTMLDivElement | null)[]>([]);
 
+  // Load Saved Characters
   useEffect(() => {
-    OBR.onReady(async () => {
-      setIsReady(true);
-
+    const saved = localStorage.getItem(LOCAL_STORAGE_REPO_KEY);
+    if (saved) {
       try {
-        await OBR.contextMenu.remove("com.tylerjhendricks95-cpu.initiative-tracker/add-token");
-      } catch (_) {}
-
-      try {
-        await OBR.contextMenu.create({
-          id: "com.tylerjhendricks95-cpu.initiative-tracker/add-token",
-          icons: [
-            {
-              icon: CONTEXT_ICON,
-              label: "Add to Initiative",
-            },
-          ],
-          select: [
-            {
-              items: [
-                { property: "layer", value: "CHARACTER" },
-                { property: "layer", value: "MOUNT" },
-                { property: "type", value: "IMAGE" },
-              ],
-            },
-          ],
-          async onClick(context) {
-            await addTokensToTracker(context.items);
-          },
-        });
-      } catch (err) {
-        console.error("Failed to register context menu:", err);
+        setRepository(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse repository data", e);
       }
-
-      OBR.room.onMetadataChange(async (metadata) => {
-        const data = metadata[METADATA_KEY] as RoomData | undefined;
-        if (data) {
-          setEntries(data.entries || []);
-          setActiveIndex(data.activeIndex || 0);
-          setRound(data.round || 1);
-          setInCombat(data.inCombat || false);
-          if (data.inCombat && data.entries.length > 0) {
-            const activeId = data.entries[data.activeIndex]?.id;
-            if (activeId) await OBR.player.select([activeId]);
-          }
-        }
-      });
-
-      const initial = await OBR.room.getMetadata();
-      const data = initial[METADATA_KEY] as RoomData | undefined;
-      if (data) {
-        setEntries(data.entries || []);
-        setActiveIndex(data.activeIndex || 0);
-        setRound(data.round || 1);
-        setInCombat(data.inCombat || false);
-        if (data.inCombat && data.entries.length > 0) {
-          const activeId = data.entries[data.activeIndex]?.id;
-          if (activeId) await OBR.player.select([activeId]);
-        }
-      }
-    });
+    }
   }, []);
 
+  const saveRepository = (newRepo: SavedCharacter[]) => {
+    setRepository(newRepo);
+    localStorage.setItem(LOCAL_STORAGE_REPO_KEY, JSON.stringify(newRepo));
+  };
+
+  const handleAddCharacterToRepo = (newChar: SavedCharacter) => {
+    saveRepository([...repository, newChar]);
+  };
+
+  const handleDeleteFromRepo = (id: string) => {
+    saveRepository(repository.filter((c) => c.id !== id));
+  };
+
+  const handleAddRepoToTracker = async (char: SavedCharacter) => {
+    const newEntry: TrackerEntry = {
+      id: "entry-" + Date.now() + "-" + Math.random().toString(36).substring(2, 6),
+      name: char.name,
+      isAuto: true,
+      modifier: char.modifier,
+      score: 0,
+      hp: char.maxHp,
+      maxHp: char.maxHp,
+      conditions: [],
+    };
+
+    await saveRoomState([...entries, newEntry], activeIndex, round, inCombat);
+  };
+
+  // Adjust Owlbear Rodeo popup height dynamically
   useEffect(() => {
     const updateWindowHeight = async () => {
       if (!containerRef.current) return;
       const contentHeight = containerRef.current.scrollHeight;
       const targetHeight = Math.min(Math.max(300, contentHeight), 800);
+
       try {
         await OBR.action.setHeight(targetHeight);
       } catch (_) {}
@@ -125,8 +80,9 @@ export default function App() {
       const timer = setTimeout(updateWindowHeight, 50);
       return () => clearTimeout(timer);
     }
-  }, [entries, isReady]);
+  }, [entries, repository, showRepo, isReady]);
 
+  // Scroll active token into view when combat turns advance
   useEffect(() => {
     if (inCombat && entryRefs.current[activeIndex]) {
       entryRefs.current[activeIndex]?.scrollIntoView({
@@ -136,78 +92,22 @@ export default function App() {
     }
   }, [activeIndex, inCombat]);
 
-  const saveRoomState = async (
-    newEntries: TrackerEntry[],
-    newActiveIdx: number,
-    newRound: number,
-    newInCombat: boolean
-  ) => {
-    setEntries(newEntries);
-    setActiveIndex(newActiveIdx);
-    setRound(newRound);
-    setInCombat(newInCombat);
-
-    await OBR.room.setMetadata({
-      [METADATA_KEY]: {
-        entries: newEntries,
-        activeIndex: newActiveIdx,
-        round: newRound,
-        inCombat: newInCombat,
-      },
-    });
-
-    if (newInCombat && newEntries.length > 0) {
-      const activeId = newEntries[newActiveIdx]?.id;
-      if (activeId) {
-        await OBR.player.select([activeId]);
-      }
-    }
-  };
-
-  const addTokensToTracker = async (items: Item[]) => {
-    const currentMetadata = (await OBR.room.getMetadata())[METADATA_KEY] as RoomData | undefined;
-    const existingEntries = currentMetadata?.entries || [];
-    const newEntries = [...existingEntries];
-
-    for (const item of items) {
-      if (newEntries.some((e) => e.id === item.id)) continue;
-      const tokenName = item.name || "Token";
-      const isManualToken = tokenName.startsWith("**");
-      newEntries.push({
-        id: item.id,
-        name: tokenName,
-        isAuto: !isManualToken,
-        modifier: 0,
-        score: 0,
-        hp: 10,
-        maxHp: 10,
-        conditions: [],
-      });
-    }
-
-    await saveRoomState(newEntries, activeIndex, round, inCombat);
-  };
-
-  const handleAddSelected = async () => {
-    const selectedIds = await OBR.player.getSelection();
-    if (!selectedIds || selectedIds.length === 0) return;
-    const selectedItems = await OBR.scene.items.getItems(selectedIds);
-    await addTokensToTracker(selectedItems);
-  };
-
+  // Tracker Logic Actions
   const toggleAuto = async (id: string) => {
-    const newEntries = entries.map((entry) => {
+    const updated = entries.map((entry) => {
       if (entry.id !== id) return entry;
       const nextIsAuto = !entry.isAuto;
       let newScore = entry.score;
+
       if (nextIsAuto && inCombat) {
         const roll = Math.floor(Math.random() * 20) + 1;
         newScore = roll + entry.modifier;
       }
+
       return { ...entry, isAuto: nextIsAuto, score: newScore };
     });
 
-    await saveRoomState(newEntries, activeIndex, round, inCombat);
+    await saveRoomState(updated, activeIndex, round, inCombat);
   };
 
   const updateEntryValue = async (
@@ -215,7 +115,7 @@ export default function App() {
     field: "score" | "modifier" | "hp" | "maxHp",
     val: number
   ) => {
-    const newEntries = entries.map((e) => {
+    const updated = entries.map((e) => {
       if (e.id !== id) return e;
       if (field === "score") return { ...e, score: val };
       if (field === "modifier") return { ...e, modifier: val };
@@ -231,37 +131,36 @@ export default function App() {
       return e;
     });
 
-    await saveRoomState(newEntries, activeIndex, round, inCombat);
+    await saveRoomState(updated, activeIndex, round, inCombat);
   };
 
   const adjustHp = async (id: string, delta: number) => {
-    const newEntries = entries.map((e) => {
+    const updated = entries.map((e) => {
       if (e.id !== id) return e;
-      const newHp = Math.min(e.maxHp, Math.max(0, e.hp + delta));
-      return { ...e, hp: newHp };
+      return { ...e, hp: Math.min(e.maxHp, Math.max(0, e.hp + delta)) };
     });
 
-    await saveRoomState(newEntries, activeIndex, round, inCombat);
+    await saveRoomState(updated, activeIndex, round, inCombat);
   };
 
   const toggleCondition = async (entryId: string, conditionName: string) => {
-    const newEntries = entries.map((e) => {
+    const updated = entries.map((e) => {
       if (e.id !== entryId) return e;
       const current = e.conditions || [];
       const exists = current.includes(conditionName);
-      const updated = exists
+      const nextConditions = exists
         ? current.filter((c) => c !== conditionName)
         : [...current, conditionName];
-      return { ...e, conditions: updated };
+      return { ...e, conditions: nextConditions };
     });
 
-    await saveRoomState(newEntries, activeIndex, round, inCombat);
+    await saveRoomState(updated, activeIndex, round, inCombat);
   };
 
   const startCombat = async () => {
     if (entries.length === 0) return;
 
-    const rolledEntries = entries.map((entry) => {
+    const rolled = entries.map((entry) => {
       if (entry.isAuto) {
         const roll = Math.floor(Math.random() * 20) + 1;
         return { ...entry, score: roll + entry.modifier };
@@ -269,15 +168,15 @@ export default function App() {
       return entry;
     });
 
-    const sorted = [...rolledEntries].sort((a, b) => b.score - a.score);
+    const sorted = [...rolled].sort((a, b) => b.score - a.score);
     await saveRoomState(sorted, 0, 1, true);
   };
 
   const nextTurn = async () => {
     if (entries.length === 0) return;
-
     let nextIdx = activeIndex + 1;
     let nextRound = round;
+
     if (nextIdx >= entries.length) {
       nextIdx = 0;
       nextRound += 1;
@@ -291,13 +190,12 @@ export default function App() {
   };
 
   const removeEntry = async (id: string) => {
-    const newEntries = entries.filter((e) => e.id !== id);
+    const updated = entries.filter((e) => e.id !== id);
     let nextIdx = activeIndex;
-    if (nextIdx >= newEntries.length) {
-      nextIdx = Math.max(0, newEntries.length - 1);
+    if (nextIdx >= updated.length) {
+      nextIdx = Math.max(0, updated.length - 1);
     }
-
-    await saveRoomState(newEntries, nextIdx, round, inCombat && newEntries.length > 0);
+    await saveRoomState(updated, nextIdx, round, inCombat && updated.length > 0);
   };
 
   if (!isReady) {
@@ -315,411 +213,50 @@ export default function App() {
         fontFamily: "sans-serif",
       }}
     >
-      {/* Dark Theme Scrollbar Styles */}
       <style>{`
-        ::-webkit-scrollbar {
-          width: 8px;
-          height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-          background: #1e1e24;
-        }
-        ::-webkit-scrollbar-thumb {
-          background: #444a5a;
-          border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-          background: #5a6175;
-        }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #1e1e24; }
+        ::-webkit-scrollbar-thumb { background: #444a5a; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5a6175; }
       `}</style>
 
-      {/* Sticky Header with Controls */}
-      <div
-        style={{
-          position: "sticky",
-          top: "-12px",
-          backgroundColor: "#1e1e24",
-          paddingTop: "12px",
-          marginTop: "-12px",
-          zIndex: 10,
-          boxShadow: "0 4px 6px -1px rgba(0,0,0,0.3)",
-        }}
-      >
-        <h2 style={{ margin: "0 0 8px 0", textAlign: "center", fontSize: "18px" }}>
-          Initiative Tracker
-        </h2>
+      <HeaderControls
+        round={round}
+        inCombat={inCombat}
+        entriesLength={entries.length}
+        showRepo={showRepo}
+        repoLength={repository.length}
+        onStartCombat={startCombat}
+        onNextTurn={nextTurn}
+        onEndCombat={endCombat}
+        onAddSelected={handleAddSelected}
+        onToggleRepo={() => setShowRepo(!showRepo)}
+      />
 
-        {/* Round & Combat Controls */}
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            backgroundColor: "#2a2d37",
-            padding: "8px 12px",
-            borderRadius: "6px",
-            marginBottom: "8px",
-          }}
-        >
-          <span style={{ fontWeight: "bold", fontSize: "14px", color: "#ffd700" }}>
-            Round: {round}
-          </span>
-          {!inCombat ? (
-            <button
-              style={{
-                padding: "6px 12px",
-                backgroundColor: "#2e7d32",
-                color: "#fff",
-                border: "none",
-                borderRadius: "4px",
-                fontWeight: "bold",
-                cursor: "pointer",
-              }}
-              onClick={startCombat}
-              disabled={entries.length === 0}
-            >
-              ⚔️ Start Combat
-            </button>
-          ) : (
-            <div style={{ display: "flex", gap: "6px" }}>
-              <button
-                style={{
-                  padding: "6px 12px",
-                  backgroundColor: "#1976d2",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "4px",
-                  fontWeight: "bold",
-                  cursor: "pointer",
-                }}
-                onClick={nextTurn}
-              >
-                Next Turn ▶
-              </button>
-              <button
-                style={{
-                  padding: "6px 8px",
-                  backgroundColor: "#c62828",
-                  color: "#fff",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                }}
-                onClick={endCombat}
-              >
-                End
-              </button>
-            </div>
-          )}
-        </div>
+      {showRepo && (
+        <CharacterLibrary
+          repository={repository}
+          onAddCharacter={handleAddCharacterToRepo}
+          onDeleteCharacter={handleDeleteFromRepo}
+          onAddToTracker={handleAddRepoToTracker}
+        />
+      )}
 
-        {/* Add Selected Button */}
-        <button
-          onClick={handleAddSelected}
-          style={{
-            width: "100%",
-            padding: "8px",
-            backgroundColor: "#444a5a",
-            color: "#ffd700",
-            border: "1px dashed #ffd700",
-            borderRadius: "6px",
-            fontWeight: "bold",
-            cursor: "pointer",
-            marginBottom: "12px",
-            fontSize: "13px",
-          }}
-        >
-          ➕ Add Selected Tokens
-        </button>
-      </div>
-
-      {/* Initiative Entries */}
       <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-        {entries.map((entry, idx) => {
-          const isActive = inCombat && idx === activeIndex;
-          const isUnconscious = entry.hp === 0;
-
-          return (
-            <div
-              key={entry.id}
-              ref={(el) => (entryRefs.current[idx] = el)}
-              style={{
-                padding: "10px",
-                backgroundColor: isActive ? "#3e3b25" : "#2a2d37",
-                borderRadius: "6px",
-                borderLeft: isActive ? "5px solid #ffd700" : "5px solid transparent",
-                opacity: isUnconscious ? 0.7 : 1,
-              }}
-            >
-              {/* Token Name & Delete */}
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: "6px",
-                }}
-              >
-                <span style={{ fontWeight: "bold", fontSize: "15px" }}>
-                  {isActive && "⚔️ "}
-                  {entry.name}{" "}
-                  {isUnconscious && (
-                    <span style={{ color: "#f44336", fontSize: "12px", marginLeft: "4px" }}>
-                      💀 Unconscious
-                    </span>
-                  )}
-                </span>
-                <button
-                  style={{ background: "none", border: "none", color: "#888", cursor: "pointer" }}
-                  onClick={() => removeEntry(entry.id)}
-                >
-                  ✕
-                </button>
-              </div>
-
-              {/* Initiative Controls */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "8px",
-                  fontSize: "12px",
-                  marginBottom: "8px",
-                }}
-              >
-                <button
-                  style={{
-                    padding: "2px 6px",
-                    backgroundColor: entry.isAuto ? "#2e7d32" : "#ed6c02",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "3px",
-                    fontWeight: "bold",
-                    fontSize: "11px",
-                    cursor: "pointer",
-                  }}
-                  onClick={() => toggleAuto(entry.id)}
-                >
-                  {entry.isAuto ? "Auto" : "Manual"}
-                </button>
-
-                {entry.isAuto ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <span>Mod:</span>
-                    <input
-                      type="number"
-                      value={entry.modifier}
-                      onChange={(e) =>
-                        updateEntryValue(entry.id, "modifier", parseInt(e.target.value, 10) || 0)
-                      }
-                      style={{
-                        width: "40px",
-                        backgroundColor: "#1e1e24",
-                        color: "#fff",
-                        border: "1px solid #444",
-                        borderRadius: "3px",
-                        padding: "2px",
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <span>Roll:</span>
-                    <input
-                      type="number"
-                      value={entry.score}
-                      onChange={(e) =>
-                        updateEntryValue(entry.id, "score", parseInt(e.target.value, 10) || 0)
-                      }
-                      style={{
-                        width: "45px",
-                        backgroundColor: "#1e1e24",
-                        color: "#fff",
-                        border: "1px solid #444",
-                        borderRadius: "3px",
-                        padding: "2px",
-                      }}
-                    />
-                  </div>
-                )}
-
-                <div
-                  style={{
-                    marginLeft: "auto",
-                    fontSize: "14px",
-                    fontWeight: "bold",
-                    color: "#ffd700",
-                  }}
-                >
-                  Init: {entry.score}
-                </div>
-              </div>
-
-              {/* HP Controls */}
-              <div
-                style={{
-                  backgroundColor: "#1e1e24",
-                  padding: "6px",
-                  borderRadius: "4px",
-                  fontSize: "12px",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                    <span style={{ fontWeight: "bold", color: "#aaa" }}>HP:</span>
-                    <input
-                      type="number"
-                      value={entry.hp}
-                      onChange={(e) =>
-                        updateEntryValue(entry.id, "hp", parseInt(e.target.value, 10) || 0)
-                      }
-                      style={{
-                        width: "40px",
-                        backgroundColor: "#2a2d37",
-                        color: "#fff",
-                        border: "1px solid #444",
-                        borderRadius: "3px",
-                        padding: "2px 4px",
-                      }}
-                    />
-                    <span>/</span>
-                    <input
-                      type="number"
-                      value={entry.maxHp}
-                      disabled={inCombat}
-                      onChange={(e) =>
-                        updateEntryValue(entry.id, "maxHp", parseInt(e.target.value, 10) || 0)
-                      }
-                      style={{
-                        width: "40px",
-                        backgroundColor: inCombat ? "#181a20" : "#2a2d37",
-                        color: inCombat ? "#666" : "#888",
-                        border: "1px solid #444",
-                        borderRadius: "3px",
-                        padding: "2px 4px",
-                        cursor: inCombat ? "not-allowed" : "text",
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ display: "flex", gap: "3px" }}>
-                    <button
-                      style={{
-                        padding: "2px 5px",
-                        backgroundColor: "#c62828",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "3px",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                      }}
-                      onClick={() => adjustHp(entry.id, -5)}
-                    >
-                      -5
-                    </button>
-                    <button
-                      style={{
-                        padding: "2px 5px",
-                        backgroundColor: "#d32f2f",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "3px",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                      }}
-                      onClick={() => adjustHp(entry.id, -1)}
-                    >
-                      -1
-                    </button>
-                    <button
-                      style={{
-                        padding: "2px 5px",
-                        backgroundColor: "#388e3c",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "3px",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                      }}
-                      onClick={() => adjustHp(entry.id, 1)}
-                    >
-                      +1
-                    </button>
-                    <button
-                      style={{
-                        padding: "2px 5px",
-                        backgroundColor: "#2e7d32",
-                        color: "#fff",
-                        border: "none",
-                        borderRadius: "3px",
-                        cursor: "pointer",
-                        fontSize: "10px",
-                      }}
-                      onClick={() => adjustHp(entry.id, 5)}
-                    >
-                      +5
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Active Conditions Display */}
-              <div style={{ marginTop: "6px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                {(entry.conditions || []).map((cond) => {
-                  const preset = PRESET_CONDITIONS.find((p) => p.name === cond);
-                  const bg = preset ? preset.color : "#444a5a";
-
-                  return (
-                    <span
-                      key={cond}
-                      onClick={() => toggleCondition(entry.id, cond)}
-                      style={{
-                        backgroundColor: bg,
-                        color: "#fff",
-                        fontSize: "10px",
-                        fontWeight: "bold",
-                        padding: "2px 6px",
-                        borderRadius: "10px",
-                        cursor: "pointer",
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "3px",
-                      }}
-                    >
-                      {cond} ✕
-                    </span>
-                  );
-                })}
-              </div>
-
-              {/* Condition Quick Selector */}
-              <div style={{ marginTop: "6px", display: "flex", flexWrap: "wrap", gap: "4px" }}>
-                {PRESET_CONDITIONS.map((p) => {
-                  const isActiveCondition = (entry.conditions || []).includes(p.name);
-
-                  return (
-                    <button
-                      key={p.name}
-                      onClick={() => toggleCondition(entry.id, p.name)}
-                      style={{
-                        padding: "2px 6px",
-                        fontSize: "10px",
-                        borderRadius: "4px",
-                        border: isActiveCondition ? `1px solid ${p.color}` : "1px solid #444",
-                        backgroundColor: isActiveCondition ? p.color : "#1e1e24",
-                        color: isActiveCondition ? "#fff" : "#888",
-                        cursor: "pointer",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {isActiveCondition ? `✓ ${p.name}` : `+ ${p.name}`}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+        {entries.map((entry, idx) => (
+          <TrackerEntryCard
+            key={entry.id}
+            ref={(el) => (entryRefs.current[idx] = el)}
+            entry={entry}
+            isActive={inCombat && idx === activeIndex}
+            inCombat={inCombat}
+            onRemove={removeEntry}
+            onToggleAuto={toggleAuto}
+            onUpdateValue={updateEntryValue}
+            onAdjustHp={adjustHp}
+            onToggleCondition={toggleCondition}
+          />
+        ))}
       </div>
     </div>
   );
