@@ -3,7 +3,7 @@
   "version": "1.0.3",
   "manifest_version": 1,
   "action": {
-    "title": "Initiative Tracker",
+    "title": "Initiative Tracker - Tester",
     "icon": "/icon.svg",
     "popover": "/Owlbear-Tracker/index.html",
     "height": 600,
